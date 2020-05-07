@@ -7,13 +7,15 @@ Created on Sat Jan 25 20:08:18 2020
 """
 
 from random import choice
-from itertools import combinations
-import numpy as np
-import os
-from tqdm import tqdm
-import time
+from itertools import combinations, product
 import pygame
-import pygame.locals
+
+from array import array
+import ctypes
+from ctypes import c_int, c_float
+from sysconfig import get_config_var
+import pickle
+from math import log
 
 
 def choose(n, k):
@@ -47,20 +49,22 @@ class hashcards():
                  deck_size=52):
         self.hand_size = hand_size
         self.deck_size = deck_size
-        self.handidx_table = np.zeros((self.hand_size, self.deck_size),
-                                      dtype='i4')
+        # self.handidx_table = np_zeros((self.hand_size, self.deck_size),
+        #                               dtype='i4')
+        self.handidx_table = [[0]*self.deck_size
+                              for _ in range(self.hand_size)]
         for i in range(self.hand_size):
             for j in range(self.deck_size-1):
                 if j == 0:
-                    self.handidx_table[i, j] = choose(self.deck_size-1-j,
+                    self.handidx_table[i][j] = choose(self.deck_size-1-j,
                                                       self.hand_size-1-i)
                 else:
-                    self.handidx_table[i, j] = (
-                        self.handidx_table[i, j-1] *
+                    self.handidx_table[i][j] = (
+                        self.handidx_table[i][j-1] *
                         (self.deck_size-j-self.hand_size+1+i) //
                         (self.deck_size-j)
                         )
-        self.handidx_table = self.handidx_table.tolist()
+        # self.handidx_table = self.handidx_table.tolist()
 
     def idx(self,
             cards):
@@ -141,34 +145,76 @@ def detect_straight(cards):
 
 class cards_functions():
     def __init__(self):
+        self.with_numpy = True
         self.hash_5num = hashcards(hand_size=5, deck_size=13)
         self.hash_2dim = hashcards(hand_size=2, deck_size=12)
         self.hash_2num = hashcards(hand_size=2, deck_size=13)
         self.hash_3dim = hashcards(hand_size=3, deck_size=12)
         self.hash_7all = hashcards(hand_size=7, deck_size=52)
         self.hash_5all = hashcards(hand_size=5, deck_size=52)
-        self.single = np.zeros((52, choose(52, 2)), dtype='bool')
-        for idx, (c1, c2) in enumerate(combinations(range(52), 2)):
-            self.single[c1, idx] = 1
-            self.single[c2, idx] = 1
-        self.single_n = np.zeros((13, choose(52, 2)), dtype='bool')
-        for idx, row in enumerate(self.single):
-            self.single_n[idx % 13] = self.single_n[idx % 13] | row
         self.hole_idx = {}
         for i, (c1, c2) in enumerate(combinations(range(52), 2)):
             self.hole_idx[(c1, c2)] = i
             self.hole_idx[(c2, c1)] = i
-        self.double_n = np.zeros((13*13, choose(52, 2)), dtype='bool')
-        for num1 in range(13):
-            for num2 in range(13):
-                idx = num1*13 + num2
-                for s1 in range(4):
-                    for s2 in range(4):
-                        hole = (num1+(s1*13), num2+(s2*13))
-                        if hole[0] != hole[1]:
-                            hole_idx = self.hole_idx[hole]
-                            self.double_n[idx, hole_idx] = True
-        self.preflop = np.load('preflop_hash.npy')
+
+        self.c_single = [[] for _ in range(52)]
+        self.c_single_n = [[] for _ in range(13)]
+        for idx, (c1, c2) in enumerate(combinations(range(52), 2)):
+            self.c_single[c1].append(idx)
+            self.c_single[c2].append(idx)
+            self.c_single_n[c1 % 13].append(idx)
+            self.c_single_n[c2 % 13].append(idx)
+        self.c_double_n = [[] for _ in range(13*13)]
+        for num1, num2 in product(range(13), repeat=2):
+            idx = num1*13 + num2
+            for s1, s2 in product(range(4), repeat=2):
+                hole = (num1+(s1*13), num2+(s2*13))
+                if num1 == num2:
+                    if s1 < s2:
+                        self.c_double_n[idx].append(self.hole_idx[hole])
+                else:
+                    self.c_double_n[idx].append(self.hole_idx[hole])
+        self.c_all = array('i', range(choose(52, 2)))
+        self.c_single = [array('i', row) for row in self.c_single]
+        self.c_single_n = [array('i', row) for row in self.c_single_n]
+        self.c_double_n = [array('i', row) for row in self.c_double_n]
+        self.all_p = ctypes.cast(self.c_all.buffer_info()[0],
+                                 ctypes.POINTER(c_float))
+        self.single_p = [ctypes.cast(row.buffer_info()[0],
+                                     ctypes.POINTER(c_float))
+                         for row in self.c_single]
+        self.single_n_p = [ctypes.cast(row.buffer_info()[0],
+                                       ctypes.POINTER(c_float))
+                           for row in self.c_single_n]
+        self.double_n_p = [ctypes.cast(row.buffer_info()[0],
+                                       ctypes.POINTER(c_float))
+                           for row in self.c_double_n]
+        with open('preflop.pkl', 'rb') as f:
+            self.preflop = pickle.load(f)
+
+        self.c_holes_score = array('i', [-1]*choose(52, 2))
+        self.holes_score_p = ctypes.cast(self.c_holes_score.buffer_info()[0],
+                                         ctypes.POINTER(c_float))
+        self.holes_op = ctypes.cdll.LoadLibrary("holes_operations" +
+                                                get_config_var("EXT_SUFFIX"))
+        # Pointer to holes float array
+        # Pointer to sub_index int array
+        # int Score value to update
+        # int Size of the sub_index
+        self.holes_op.min_update.argtypes = [ctypes.POINTER(c_float),
+                                             ctypes.POINTER(c_float),
+                                             c_int,
+                                             c_int]
+        self.holes_op.min_update.restype = None
+
+        # Pointer to holes float array
+        # int Score value to compare against
+        # int Size of the holes array
+        self.holes_op.is_under.argtypes = [ctypes.POINTER(c_float),
+                                           c_int,
+                                           c_int]
+        # Number of elements under the value
+        self.holes_op.is_under.restype = c_int
 
     def cards_to_idx(self, cards):
         hand_size = len(cards)
@@ -286,17 +332,17 @@ class cards_functions():
         score += 10
 
         # Four of a kind
-        hand = np.zeros((4, 13), dtype='bool')
+        hand = [[0]*13 for _ in range(4)]
         for card in cards:
             suit = card//13
             numb = card-suit*13
-            hand[suit, numb] = True
-        num_groups = hand.sum(axis=0)
-        num_groups = np.concatenate((num_groups[1:], num_groups[0:1]))
-        num_present = num_groups.nonzero()[0][::-1]+2
+            hand[suit][numb] = 1
+        num_groups = [sum(n) for n in zip(*hand)]
+        num_groups = num_groups[1:] + num_groups[0:1]
+        num_present = [i+2 for i, x in enumerate(num_groups) if x != 0][::-1]
 
-        fours = np.where(num_groups == 4)[0][::-1]+2
-        if fours.size:
+        fours = [i+2 for i, x in enumerate(num_groups) if x == 4][::-1]
+        if fours:
             if num_present[0] == fours[0]:
                 high_card = num_present[1]
             else:
@@ -309,10 +355,10 @@ class cards_functions():
         score += 156
 
         # Full house
-        trios = np.where(num_groups == 3)[0][::-1]+2
-        pairs = np.where(num_groups == 2)[0][::-1]+2
-        if trios.size and trios.size+pairs.size >= 2:
-            if trios.size >= 2:
+        trios = [i+2 for i, x in enumerate(num_groups) if x == 3][::-1]
+        pairs = [i+2 for i, x in enumerate(num_groups) if x == 2][::-1]
+        if len(trios) and len(trios)+len(pairs) >= 2:
+            if len(trios) >= 2:
                 hand_values = [trios[0], trios[1]]
             else:
                 hand_values = [trios[0], pairs[0]]
@@ -323,21 +369,23 @@ class cards_functions():
         score += 156
 
         # Flush
-        suit_groups = hand.sum(axis=1)
-        flush = np.where(suit_groups >= 5)[0]
-        if flush.size:
+        suit_groups = [sum(s) for s in hand]
+        flush = [i for i, x in enumerate(suit_groups) if x >= 5]
+        if flush:
             hand_values = hand[flush[0]]
-            hand_values = np.concatenate((hand_values[1:], hand_values[0:1]))
-            hand_values = hand_values.nonzero()[0][::-1][:5]
-            score += self.hash_5num.idx(12-hand_values) + hand_values[0] - 14
+            hand_values = hand_values[1:] + hand_values[0:1]
+            hand_values = [i for i, x in enumerate(hand_values)
+                           if x != 0][::-1][:5]
+            score += (self.hash_5num.idx([12-x for x in hand_values]) +
+                      hand_values[0] - 14)
             if hand_values[0] == 12:
                 score += 1
-            hand_values = (hand_values+2).tolist()
+            hand_values = [x+2 for x in hand_values]
             return score, 'Flush', hand_values
         score += 1277
 
         # Straight
-        loop_cards = (num_present[::-1]-1).tolist()
+        loop_cards = [x-1 for x in num_present[::-1]]
         if 13 in loop_cards:
             loop_cards = [0] + loop_cards
         diffs = [0 for _ in range(len(loop_cards)-4)]
@@ -355,7 +403,7 @@ class cards_functions():
         score += 10
 
         # Threes
-        if trios.size:
+        if trios:
             hand_values = [c for c in num_present
                            if c not in trios]
             hand_values = [trios[0]]+hand_values[:2]
@@ -365,7 +413,7 @@ class cards_functions():
         score += 858
 
         # Two pairs
-        if pairs.size >= 2:
+        if len(pairs) >= 2:
             hand_values = [c for c in num_present
                            if c not in pairs[:2]]
             hand_values = [pairs[0], pairs[1], hand_values[0]]
@@ -377,7 +425,7 @@ class cards_functions():
         score += 858
 
         # Pairs
-        if pairs.size:
+        if pairs:
             hand_values = [c for c in num_present
                            if c != pairs[0]]
             hand_values = [pairs[0]]+hand_values[:3]
@@ -387,11 +435,12 @@ class cards_functions():
         score += 2860
 
         # High card
-        hand_values = num_present[:5]-2
-        score += self.hash_5num.idx(12-hand_values) + hand_values[0] - 14
+        hand_values = [x-2 for x in num_present[:5]]
+        score += (self.hash_5num.idx([12-x for x in hand_values]) +
+                  hand_values[0] - 14)
         if hand_values[0] == 12:
             score += 1
-        hand_values = (hand_values+2).tolist()
+        hand_values = [x+2 for x in hand_values]
         return score, 'High card', hand_values
 
     def update_holes_score(self,
@@ -399,30 +448,33 @@ class cards_functions():
                            score,
                            hole_type='hole'):
         if hole is None or hole_type == 'all':
-            self.holes_score = np.minimum(self.holes_score, score)
+            self.holes_op.min_update(self.holes_score_p,
+                                     self.all_p,
+                                     score,
+                                     len(self.c_all))
             self.break_flag = True
         elif hole_type == 'hole':
             idx = self.cards_to_idx(hole)
-            if self.holes_score[idx] > score:
-                self.holes_score[idx] = score
+            if self.c_holes_score[idx] > score:
+                self.c_holes_score[idx] = score
         elif hole_type == 'card':
-            self.holes_score[self.single[hole]] = np.minimum(
-                self.holes_score[self.single[hole]],
-                score
-                )
+            self.holes_op.min_update(self.holes_score_p,
+                                     self.single_p[hole],
+                                     score,
+                                     len(self.c_single[hole]))
         elif hole_type == 'num':
             num = ((hole - 1) % 13)
-            self.holes_score[self.single_n[num]] = np.minimum(
-                self.holes_score[self.single_n[num]],
-                score
-                )
+            self.holes_op.min_update(self.holes_score_p,
+                                     self.single_n_p[num],
+                                     score,
+                                     len(self.c_single_n[num]))
         elif hole_type == 'numnum':
             nums = sorted(hole)
             idx = ((nums[0] - 1) % 13)*13 + ((nums[1] - 1) % 13)
-            self.holes_score[self.double_n[idx]] = np.minimum(
-                self.holes_score[self.double_n[idx]],
-                score
-                )
+            self.holes_op.min_update(self.holes_score_p,
+                                     self.double_n_p[idx],
+                                     score,
+                                     len(self.c_double_n[idx]))
         else:
             raise NameError('Unknown hole_type')
 
@@ -431,7 +483,9 @@ class cards_functions():
         if len(cards) != 5:
             raise NameError('Should be table (n=5) cards')
         hand_score = 0
-        self.holes_score = 7462*np.ones(choose(52, 2), dtype=int)
+        self.c_holes_score = array('i', [7462]*choose(52, 2))
+        self.holes_score_p = ctypes.cast(self.c_holes_score.buffer_info()[0],
+                                         ctypes.POINTER(c_float))
         self.break_flag = False
 
         # Royal & straight-flush
@@ -451,7 +505,7 @@ class cards_functions():
         if self.break_flag:
             for c in cards:
                 self.update_holes_score(c, -1, 'card')
-            return self.holes_score
+            return self.c_holes_score
         hand_score += 10
 
         # Four of a kind
@@ -505,7 +559,7 @@ class cards_functions():
         if self.break_flag:
             for c in cards:
                 self.update_holes_score(c, -1, 'card')
-            return self.holes_score
+            return self.c_holes_score
         hand_score += 156
 
         # Full house
@@ -595,7 +649,7 @@ class cards_functions():
         if self.break_flag:
             for c in cards:
                 self.update_holes_score(c, -1, 'card')
-            return self.holes_score
+            return self.c_holes_score
         hand_score += 156
 
         # Flush
@@ -680,7 +734,7 @@ class cards_functions():
         if self.break_flag:
             for c in cards:
                 self.update_holes_score(c, -1, 'card')
-            return self.holes_score
+            return self.c_holes_score
         hand_score += 1277
 
         # Straight
@@ -701,7 +755,7 @@ class cards_functions():
         if self.break_flag:
             for c in cards:
                 self.update_holes_score(c, -1, 'card')
-            return self.holes_score
+            return self.c_holes_score
         hand_score += 10
 
         # Three of a kind
@@ -758,7 +812,7 @@ class cards_functions():
         if self.break_flag:
             for c in cards:
                 self.update_holes_score(c, -1, 'card')
-            return self.holes_score
+            return self.c_holes_score
         hand_score += 858
 
         # Two pairs
@@ -881,7 +935,7 @@ class cards_functions():
         if self.break_flag:
             for c in cards:
                 self.update_holes_score(c, -1, 'card')
-            return self.holes_score
+            return self.c_holes_score
         hand_score += 858
 
         # Pair
@@ -939,7 +993,7 @@ class cards_functions():
         if self.break_flag:
             for c in cards:
                 self.update_holes_score(c, -1, 'card')
-            return self.holes_score
+            return self.c_holes_score
         hand_score += 2860
 
         # High card
@@ -969,52 +1023,7 @@ class cards_functions():
 
         for c in cards:
             self.update_holes_score(c, -1, 'card')
-        return self.holes_score
-
-
-def create_preflop_hash():
-    CF = cards_functions()
-    doubles = ~(CF.single.T@CF.single)
-    start_iter = 0
-    for file_name in os.listdir():
-        if file_name[:13] == 'preflop_hash_' and file_name[-4:] == '.npy':
-            start_iter = max(int(file_name[13:-4]), start_iter)
-    if start_iter == 0:
-        holes_data = np.zeros((choose(52, 2), 2), dtype=float)
-    else:
-        holes_data = np.load(f'preflop_hash_{start_iter}.npy')
-    save_dt = 60
-    t_start = time.time()
-    with tqdm(total=choose(52, 5), initial=start_iter) as pbar:
-        for n_iter, table in enumerate(combinations(range(52), 5)):
-            if n_iter < start_iter:
-                continue
-            pbar.update(1)
-            if pbar.last_print_t > t_start+save_dt:
-                t_start += save_dt
-                names_remove = [file_name for file_name in os.listdir()
-                                if (file_name[:13] == 'preflop_hash_' and
-                                    file_name[-4:] == '.npy')]
-                np.save(f'preflop_hash_{n_iter}.npy', holes_data)
-                for file_name in names_remove:
-                    os.remove(file_name)
-            holes = CF.table_holes(table)
-            for hole_idx in range(holes.shape[0]):
-                if holes[hole_idx] != -1:
-                    losing_holes = holes < holes[hole_idx]
-                    winning_holes = holes > holes[hole_idx]
-                    holes_data[hole_idx, 1] += \
-                        (losing_holes*doubles[hole_idx]).sum() - 245
-                    holes_data[hole_idx, 0] += \
-                        (winning_holes*doubles[hole_idx]).sum()
-    names_remove = [file_name for file_name in os.listdir()
-                    if (file_name[:13] == 'preflop_hash_' and
-                        file_name[-4:] == '.npy')]
-    np.save(f'preflop_hash_{n_iter+1}.npy', holes_data)
-    for file_name in names_remove:
-        os.remove(file_name)
-    holes_data = holes_data/choose(47, 2)/choose(50, 5)
-    np.save(f'preflop_hash.npy', holes_data)
+        return self.c_holes_score
 
 
 def gamblers_ruin(bet, pr, b1, b2, tol=0):
@@ -1091,7 +1100,6 @@ class Table():
         self.player_probs_fold = [0 for _ in range(self.n_players)]
         self.player_probs_call = [0 for _ in range(self.n_players)]
         self.player_ideal_bets = [0 for _ in range(self.n_players)]
-        # self.holes_rank = -np.ones(choose(52, 2), dtype=int)
 
     def __repr__(self):
         string = ' '*10+'HAND  MONEY   BET\n'
@@ -1149,16 +1157,6 @@ class Table():
                 print('p_fold:', self.player_probs_fold)
                 print('p_call:', self.player_probs_call)
                 print('id_bet:', self.player_ideal_bets)
-                # for player_idx in range(self.n_players):
-                #     player_hole = [c.card_idx
-                #                    for c in self.player_hands[player_idx]]
-                #     if len(player_hole) == 2:
-                #         rank = self.holes_rank[
-                #             self.funcs.cards_to_idx(player_hole)
-                #             ]+1
-                #     else:
-                #         rank = 0
-                #     print(f'P{player_idx} rank: {rank}/1176')
             return
 
         screen = self.screen
@@ -1278,16 +1276,6 @@ class Table():
                 black)
             screen.blit(text, (20, 260))
 
-            # player_hole = [c.card_idx
-            #                for c in self.player_hands[0]]
-            # if len(player_hole) == 2:
-            #     rank =\
-            #         self.holes_rank[self.funcs.cards_to_idx(player_hole)]+1
-            # else:
-            #     rank = -1
-            # text = font_debug.render(f'h_rank = {rank}/1176', True, black)
-            # screen.blit(text, (20, 290))
-
             text = font_debug.render(
                 f'1/tol  = {1/self.player_tolerances[0]:.1f}',
                 True,
@@ -1358,17 +1346,6 @@ class Table():
                 True,
                 black)
             screen.blit(text, (700, 260))
-
-            # player_hole = [c.card_idx
-            #                for c in self.player_hands[1]]
-            # if len(player_hole) == 2:
-            #     rank =\
-            #         self.holes_rank[self.funcs.cards_to_idx(player_hole)]+1
-            # else:
-            #     rank = -1
-            # text = font_debug.render(
-            #     f'h_rank = {rank}/1176', True, black)
-            # screen.blit(text, (700, 290))
 
             text = font_debug.render(
                 f'1/tol  = {1/self.player_tolerances[1]:.1f}',
@@ -1476,10 +1453,6 @@ class Table():
                   self.player_bets[player_idx])
             b2 = (sum(self.player_banks) +
                   sum(self.player_bets) - b1)
-            # player_hole = [c.card_idx
-            #                for c in self.player_hands[player_idx]]
-            # hole_idx = self.funcs.cards_to_idx(player_hole)
-            # rank = self.holes_rank[hole_idx]
 
             prob_fold = gamblers_ruin(max(ideal_bet, bet), pr, b1-bet, b2+bet)
             self.player_probs_fold[player_idx] = prob_fold
@@ -1497,16 +1470,12 @@ class Table():
         if len(self.table_cards) == 0:
             self.player_probs_lose = []
             self.player_probs_win = []
-            # holes_data = self.funcs.preflop.T
-            # holes_prob = (holes_data[0] /
-            #               np.maximum(holes_data[1], 10**-5))
-            # self.holes_rank = rankdata(-holes_prob, method='min')
             for player_idx in range(self.n_players):
                 player_hole = [c.card_idx
                                for c in self.player_hands[player_idx]]
                 hole_idx = self.funcs.cards_to_idx(player_hole)
-                self.player_probs_win.append(self.funcs.preflop[hole_idx, 0])
-                self.player_probs_lose.append(self.funcs.preflop[hole_idx, 1])
+                self.player_probs_win.append(self.funcs.preflop[hole_idx][0])
+                self.player_probs_lose.append(self.funcs.preflop[hole_idx][1])
 
             self.raise_bet(self.pidx_blind, self.blinds)
             self.raise_bet(((self.pidx_blind+1) % self.n_players),
@@ -1516,9 +1485,6 @@ class Table():
             self.blit()
 
         else:
-            # This method is an approximation for holes_data.
-            # See create_preflop_hash() for the correct method
-            # holes_data = np.zeros((2, 1326), dtype=float)
             cards = [c.card_idx for c in self.table_cards]
             self.player_probs_lose = [0 for _ in range(self.n_players)]
             self.player_probs_win = [0 for _ in range(self.n_players)]
@@ -1526,12 +1492,6 @@ class Table():
                 valid_flag = all([c not in cards for c in remain_cards])
                 if valid_flag:
                     holes = self.funcs.table_holes(cards + list(remain_cards))
-                    # losing_holes = rankdata(holes, method='min') - 246
-                    # losing_holes[losing_holes == -245] = 0
-                    # winning_holes = 1326 - rankdata(holes, method='max')
-                    # winning_holes[winning_holes == 1081] = 0
-                    # holes_data[1] += losing_holes
-                    # holes_data[0] += winning_holes
 
                     for player_idx in range(self.n_players):
                         player_hole = [c.card_idx
@@ -1539,22 +1499,31 @@ class Table():
                         if any([c in remain_cards for c in player_hole]):
                             continue
                         score = holes[self.funcs.cards_to_idx(player_hole)]
-                        holes_temp = holes.copy()
+                        holes_temp = array('i', holes)
+                        holes_temp_p = ctypes.cast(holes_temp.buffer_info()[0],
+                                                   ctypes.POINTER(c_float))
                         for card_idx in player_hole:
-                            holes_temp[self.funcs.single[card_idx]] = -1
-                        better_hands = (holes_temp < score).sum() - 336
-                        tied_hands = (holes_temp == score).sum()
+                            for idx in self.funcs.c_single[card_idx]:
+                                holes_temp[idx] = -1
+                            self.funcs.holes_op.min_update(
+                                holes_temp_p,
+                                self.funcs.single_p[card_idx],
+                                -1,
+                                len(self.funcs.c_single[card_idx]))
+                        better_hands = self.funcs.holes_op.is_under(
+                            holes_temp_p,
+                            score,
+                            len(holes_temp)
+                            ) - 336
+                        tied_hands = self.funcs.holes_op.is_equal(
+                            holes_temp_p,
+                            score,
+                            len(holes_temp))
                         self.player_probs_lose[player_idx] += better_hands
                         self.player_probs_win[player_idx] += (990 -
                                                               better_hands -
                                                               tied_hands)
 
-            # holes_data /= (choose(47, 2)*
-            #                choose(50 - len(cards), 5 - len(cards)))
-            # holes_prob = (holes_data[0] /
-            #               np.maximum(holes_data[1], 10**-5))
-            # self.holes_rank = rankdata(-holes_prob, method='min')
-            # holes_prob = holes_prob[(holes_data != 0).any(axis=0)]
             self.player_probs_lose = [p/990/choose(50 - len(cards),
                                                    5 - len(cards))
                                       for p in self.player_probs_lose]
@@ -1573,7 +1542,7 @@ class Table():
                   self.player_bets[player_idx])
             b2 = (sum(self.player_banks) + sum(self.player_bets) - b1)
             tol = self.player_tolerances[player_idx]
-            lower_bound = -np.log(pr)*b1/np.log(tol)
+            lower_bound = -log(pr)*b1/log(tol)-1
 
             if lower_bound < 1:
                 ideal_bet = 1
@@ -1682,7 +1651,6 @@ class Table():
         self.player_probs_fold = [0 for _ in range(self.n_players)]
         self.player_probs_call = [0 for _ in range(self.n_players)]
         self.player_ideal_bets = [0 for _ in range(self.n_players)]
-        self.holes_rank = -np.ones(choose(52, 2), dtype=int)
 
     def step(self,
              dealer_idx=None):
@@ -1773,7 +1741,7 @@ class start_screen():
         blue = (0, 0, 150)
         green = (0, 150, 0)
 
-        blit_text(screen,
+        blit_text(self.screen,
                   ('Your friend Player 1 asked you to be the dealer at a '
                    'Texas Hold\'em poker game\n'
                    'Being a good friend with questionable morals, '
@@ -1911,8 +1879,6 @@ def game_ui(screen):
                 pygame.event.clear()
                 # print('A', game.state, game.message)
 
-
-# create_preflop_hash()
 
 if __name__ == "__main__":
 
