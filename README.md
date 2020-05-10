@@ -4,15 +4,14 @@ This project is a simple Python game coded with pygame where you play as the dea
 
 Current version 0.1 (working prototype)
 
-# How to download the game
+# Download the game
 
-## Method 1: Use the Windows 10 installer
+### Windows 10 executable
 
-[Download the installer of the game](https://www.dropbox.com/s/0m2hz51cwocpbow/StackTheDeck-0.1-amd64.msi?dl=0), select a directory to install the game in, then open StackTheDeck.exe.
+[Download the .exe file here](https://www.dropbox.com/s/4qq72gvvv6gbq2f/StackTheDeck.exe?dl=0
+)
 
-To remove the game, simply delete the directory and the installer.
-
-## Method 2: Download python
+### Alternate method: Download python
 
 Download and install [Anaconda](https://docs.conda.io/en/latest/miniconda.html).
 
@@ -21,9 +20,9 @@ Open the Anaconda Powershell Prompt that came with the installation
 Type the following 3 command line to create an environment with the appropriate packages
 
 ```
-conda create -n stackthedeck numpy tqdm python=3.6
+conda create -n stackthedeck python=3.6
 conda activate stackthedeck
-python -m pip intall -U pygame --user
+python -m pip install pygame
 ```
 Download the files through the green button **Clone or download** - **Download .ZIP** on the top right corner of this page. Then, from the Anaconda Powershell Prompt, use commands like ```cd``` to go in the downloaded directory, and type
 
@@ -31,16 +30,22 @@ Download the files through the green button **Clone or download** - **Download .
 python StackTheDeck.py
 ```
 
-# Package dependancies
+# Project files
 
-```
-numpy=1.18.1
-tqdm=4.45.0
-pip:
-  pygame=1.9.6
-```
-# Notes on creating the installer
+* **compute_preflop.py**: Computes *preflop.pkl*
+* **cx_setup.py**: cx_freeze setup file installer for Windows. Use with ```python cx_setup.py bdist_msi```
+* **freesansbold.ttf**: Default font for pygame. Optional file.
+* **holes_operations_win.c**: External C code for Windows. Must be compiled in a .dll with Visual Studio
+* **holes_operations_mac.c**: External C code for Mac. Must be compiled in a .so with ```python so_setup.py build_ext --inplace```
+* **holes_operations.dll**: C library for Windows
+* **holes_operations.so**: C library for Mac
+* **preflop.pkl**: pre flop probabilities data
+* **StackTheDeck.py**: Main game code
+* **StackTheDeck-0.1-amd64.msi**: cx_freeze game installer for Windows. Alternative to the .exe file.
+* **StackTheDeck.exe**: PyInstaller standalone .exe for Windows
 
-The installer was created with ```cx_freeze``` through the command ```python setup.py bdist_msi```.
+# Notes on package dependancies
 
-The setup.py file needed been crafted to include all the game assets in the build, as well as missing Intel MKL libraries that are not included by default by cx_freeze. See the setup.py file for more information. This results in a humongous 240 Mb installer file, or more than 600 Mb of uncompiled .dll files. I suspect this to be entirely because of the current dependancy on numpy.
+The only necessary package for executing the game is ```pygame=1.9.6```. However, many packages were used for the development of the game. ```tqdm=4.45.0``` is used to compute the pre-flop probabilities. An older version of ```setuptools=44.0.0``` is used for proper use of ```pyinstaller=3.6``` to create the executable. ```cx-freeze=6.1``` is used to create an alternate installer.
+
+I also use homemade .c libraries to circumvent the dependency on ```numpy```. The creation of a standalone executable from Python that uses numpy creates up to 600 Mb of mkl files.

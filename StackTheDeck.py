@@ -5,17 +5,27 @@ Created on Sat Jan 25 20:08:18 2020
 
 @author: berube
 """
-
+import os
 from random import choice
 from itertools import combinations, product
 import pygame
-
 from array import array
 import ctypes
 from ctypes import c_int, c_float
-from sysconfig import get_config_var
 import pickle
 from math import log
+import sys
+
+
+def resource_path(relative_path):
+    """ Get absolute path to resource, works for dev and for PyInstaller """
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+
+    return os.path.join(base_path, relative_path)
 
 
 def choose(n, k):
@@ -189,32 +199,53 @@ class cards_functions():
         self.double_n_p = [ctypes.cast(row.buffer_info()[0],
                                        ctypes.POINTER(c_float))
                            for row in self.c_double_n]
-        with open('preflop.pkl', 'rb') as f:
+        with open(resource_path('preflop.pkl'), 'rb') as f:
             self.preflop = pickle.load(f)
 
         self.c_holes_score = array('i', [-1]*choose(52, 2))
         self.holes_score_p = ctypes.cast(self.c_holes_score.buffer_info()[0],
                                          ctypes.POINTER(c_float))
-        self.holes_op = ctypes.cdll.LoadLibrary("holes_operations" +
-                                                get_config_var("EXT_SUFFIX"))
+        if os.name == 'nt':
+            dll = ctypes.CDLL(resource_path('holes_operations.dll'))
+            winftype = ctypes.WINFUNCTYPE(None)
+            self.min_update = winftype(("min_update", dll))
+            self.is_under = winftype(("is_under", dll))
+            self.is_equal = winftype(("is_equal", dll))
+        elif os.name == 'posix':
+            holes_op = ctypes.cdll.LoadLibrary('holes_operations.so')
+            self.min_update = holes_op.min_update
+            self.is_under = holes_op.is_under
+            self.is_equal = holes_op.is_equal
+        else:
+            raise NameError('Unknown OS')
+
         # Pointer to holes float array
         # Pointer to sub_index int array
         # int Score value to update
         # int Size of the sub_index
-        self.holes_op.min_update.argtypes = [ctypes.POINTER(c_float),
-                                             ctypes.POINTER(c_float),
-                                             c_int,
-                                             c_int]
-        self.holes_op.min_update.restype = None
+        self.min_update.argtypes = [ctypes.POINTER(c_float),
+                                    ctypes.POINTER(c_float),
+                                    c_int,
+                                    c_int]
+        self.min_update.restype = None
 
         # Pointer to holes float array
         # int Score value to compare against
         # int Size of the holes array
-        self.holes_op.is_under.argtypes = [ctypes.POINTER(c_float),
-                                           c_int,
-                                           c_int]
+        self.is_under.argtypes = [ctypes.POINTER(c_float),
+                                  c_int,
+                                  c_int]
         # Number of elements under the value
-        self.holes_op.is_under.restype = c_int
+        self.is_under.restype = c_int
+
+        # Pointer to holes float array
+        # int Score value to compare against
+        # int Size of the holes array
+        self.is_equal.argtypes = [ctypes.POINTER(c_float),
+                                  c_int,
+                                  c_int]
+        # Number of elements under the value
+        self.is_equal.restype = c_int
 
     def cards_to_idx(self, cards):
         hand_size = len(cards)
@@ -448,33 +479,33 @@ class cards_functions():
                            score,
                            hole_type='hole'):
         if hole is None or hole_type == 'all':
-            self.holes_op.min_update(self.holes_score_p,
-                                     self.all_p,
-                                     score,
-                                     len(self.c_all))
+            self.min_update(self.holes_score_p,
+                            self.all_p,
+                            score,
+                            len(self.c_all))
             self.break_flag = True
         elif hole_type == 'hole':
             idx = self.cards_to_idx(hole)
             if self.c_holes_score[idx] > score:
                 self.c_holes_score[idx] = score
         elif hole_type == 'card':
-            self.holes_op.min_update(self.holes_score_p,
-                                     self.single_p[hole],
-                                     score,
-                                     len(self.c_single[hole]))
+            self.min_update(self.holes_score_p,
+                            self.single_p[hole],
+                            score,
+                            len(self.c_single[hole]))
         elif hole_type == 'num':
             num = ((hole - 1) % 13)
-            self.holes_op.min_update(self.holes_score_p,
-                                     self.single_n_p[num],
-                                     score,
-                                     len(self.c_single_n[num]))
+            self.min_update(self.holes_score_p,
+                            self.single_n_p[num],
+                            score,
+                            len(self.c_single_n[num]))
         elif hole_type == 'numnum':
             nums = sorted(hole)
             idx = ((nums[0] - 1) % 13)*13 + ((nums[1] - 1) % 13)
-            self.holes_op.min_update(self.holes_score_p,
-                                     self.double_n_p[idx],
-                                     score,
-                                     len(self.c_double_n[idx]))
+            self.min_update(self.holes_score_p,
+                            self.double_n_p[idx],
+                            score,
+                            len(self.c_double_n[idx]))
         else:
             raise NameError('Unknown hole_type')
 
@@ -1059,8 +1090,10 @@ class Card():
                      2: 'heart',
                      3: 'diamond',
                      4: 'club'}
-        self.path = (f"assets/Playing_card_{suit_path[self.suit_int]}"
-                     f"_{self.value}.svg.png")
+        self.path = resource_path(
+            f"assets/Playing_card_{suit_path[self.suit_int]}"
+            f"_{self.value}.svg.png"
+            )
 
     def __repr__(self):
         return self.value+self.suit_symbol
@@ -1161,8 +1194,17 @@ class Table():
 
         screen = self.screen
         screen.fill((85, 170, 85))
-        font = pygame.font.Font(pygame.font.get_default_font(), 32)
-        font_debug = pygame.font.Font(pygame.font.get_default_font(), 10)
+        try:
+            frozen_flag = getattr(sys, "frozen")
+        except AttributeError:
+            frozen_flag = False
+        if frozen_flag:
+            font = pygame.font.Font(resource_path('freesansbold.ttf'), 32)
+            font_debug = pygame.font.Font(resource_path('freesansbold.ttf'),
+                                          10)
+        else:
+            font = pygame.font.Font(pygame.font.get_default_font(), 32)
+            font_debug = pygame.font.Font(pygame.font.get_default_font(), 10)
         white = (255, 255, 255)
         gray = (50, 50, 50)
         red = (150, 0, 0)
@@ -1505,17 +1547,17 @@ class Table():
                         for card_idx in player_hole:
                             for idx in self.funcs.c_single[card_idx]:
                                 holes_temp[idx] = -1
-                            self.funcs.holes_op.min_update(
+                            self.funcs.min_update(
                                 holes_temp_p,
                                 self.funcs.single_p[card_idx],
                                 -1,
                                 len(self.funcs.c_single[card_idx]))
-                        better_hands = self.funcs.holes_op.is_under(
+                        better_hands = self.funcs.is_under(
                             holes_temp_p,
                             score,
                             len(holes_temp)
                             ) - 336
-                        tied_hands = self.funcs.holes_op.is_equal(
+                        tied_hands = self.funcs.is_equal(
                             holes_temp_p,
                             score,
                             len(holes_temp))
@@ -1732,8 +1774,18 @@ class start_screen():
 
     def blit(self):
         self.screen.fill((85, 170, 85))
-        font = pygame.font.Font(pygame.font.get_default_font(), 32)
-        font_debug = pygame.font.Font(pygame.font.get_default_font(), 10)
+        try:
+            frozen_flag = getattr(sys, "frozen")
+        except AttributeError:
+            frozen_flag = False
+        if frozen_flag:
+            print(os.getcwd())
+            font = pygame.font.Font(resource_path('freesansbold.ttf'), 32)
+            font_debug = pygame.font.Font(resource_path('freesansbold.ttf'),
+                                          10)
+        else:
+            font = pygame.font.Font(pygame.font.get_default_font(), 32)
+            font_debug = pygame.font.Font(pygame.font.get_default_font(), 10)
         white = (255, 255, 255)
         black = (0, 0, 0)
         gray = (50, 50, 50)
