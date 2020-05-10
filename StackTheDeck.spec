@@ -7,12 +7,18 @@ font_path = os.path.join(font_path, font)
 # font_path = 'freesansbold.ttf'
 pathex = os.getcwd()
 
+datas = [('preflop.pkl', '.'), (font_path, '.')]
+if os.name == 'nt':
+    datas += [('holes_operations.dll', '.'), ('assets\\*', 'assets')]
+if os.name == 'posix':
+    datas += [('holes_operations.so', '.'), ('assets/*', 'assets')]
+
 block_cipher = None
 
 a = Analysis(['StackTheDeck.py'],
              pathex=[pathex],
              binaries=[],
-             datas=[('assets\\*', 'assets'), ('holes_operations.dll', '.'), ('preflop.pkl', '.'), (font_path, '.')],
+             datas=datas,
              hiddenimports=[],
              hookspath=[],
              runtime_hooks=[],
@@ -37,3 +43,8 @@ exe = EXE(pyz,
           upx_exclude=[],
           runtime_tmpdir=None,
           console=False )
+if os.name == 'posix':
+    app = BUNDLE(exe,
+                 name='StackTheDeck.app',
+                 icon=None,
+                 bundle_identifier=None)

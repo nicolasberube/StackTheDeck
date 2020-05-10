@@ -155,7 +155,6 @@ def detect_straight(cards):
 
 class cards_functions():
     def __init__(self):
-        self.with_numpy = True
         self.hash_5num = hashcards(hand_size=5, deck_size=13)
         self.hash_2dim = hashcards(hand_size=2, deck_size=12)
         self.hash_2num = hashcards(hand_size=2, deck_size=13)
