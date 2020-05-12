@@ -30,6 +30,7 @@ python -m pip install pygame
 Download the files through the green button **Clone or download** - **Download .ZIP** on the top right corner of this page. Then, from the Anaconda Powershell Prompt, use commands like ```cd``` to go in the downloaded directory, and type
 
 ```
+conda activate stackthedeck
 python StackTheDeck.py
 ```
 
