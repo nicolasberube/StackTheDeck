@@ -6,10 +6,13 @@ Current version 0.1 (working prototype)
 
 # Download the game
 
-### Windows 10 executable
+### Standalone executable
 
-[Download the .exe file here](https://www.dropbox.com/s/4qq72gvvv6gbq2f/StackTheDeck.exe?dl=0
-)
+[Windows .exe file](https://github.com/nicolasberube/StackTheDeck/raw/master/StackTheDeck.exe)
+
+[Mac/Unix executable file](https://github.com/nicolasberube/StackTheDeck/raw/master/StackTheDeck.app/Contents/MacOS/StackTheDeck)
+
+For a Mac .app file that does not launch a console every time, you can download all files through the green button **Clone or download** - **Download .ZIP** on the top right corner of this page. You will find the file StackTheDeck.app in the folder, which is the only file you will need. I'm not aware of any native Git method to download only the .app file.
 
 ### Alternate method: Download python
 
