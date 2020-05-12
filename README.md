@@ -46,6 +46,7 @@ python StackTheDeck.py
 * **StackTheDeck.py**: Main game code
 * **StackTheDeck-0.1-amd64.msi**: cx_freeze game installer for Windows. Alternative to the .exe file.
 * **StackTheDeck.exe**: PyInstaller standalone .exe for Windows
+* **StackTheDeck.spec**: PyInstaller setup file for Windows/Mac. Use with ```pyinstaller StackTheDeck.spec```
 
 # Notes on package dependancies
 
