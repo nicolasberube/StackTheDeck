@@ -35,18 +35,20 @@ python StackTheDeck.py
 
 # Project files
 
+* **StackTheDeck.app**: Standalone executable file .app for Mac (from PyInstaller)
+* **StackTheDeck-0.1-amd64.msi**: cx_freeze game installer for Windows. Alternative to the .exe file.
+* **StackTheDeck.exe**: Standalone executable file .exe for Windows (from PyInstaller)
+* **StackTheDeck.py**: Main game code
+* **StackTheDeck.spec**: PyInstaller setup file for Windows/Mac. Use with ```pyinstaller StackTheDeck.spec```
 * **compute_preflop.py**: Computes *preflop.pkl*
 * **cx_setup.py**: cx_freeze setup file installer for Windows. Use with ```python cx_setup.py bdist_msi```
 * **freesansbold.ttf**: Default font for pygame. Optional file.
 * **holes_operations_win.c**: External C code for Windows. Must be compiled in a .dll with Visual Studio
-* **holes_operations_mac.c**: External C code for Mac. Must be compiled in a .so with ```python so_setup.py build_ext --inplace```
+* **holes_operations_mac.c**: External C code for Mac. Must be compiled in a .so with *so_setup.py*
 * **holes_operations.dll**: C library for Windows
 * **holes_operations.so**: C library for Mac
 * **preflop.pkl**: pre flop probabilities data
-* **StackTheDeck.py**: Main game code
-* **StackTheDeck-0.1-amd64.msi**: cx_freeze game installer for Windows. Alternative to the .exe file.
-* **StackTheDeck.exe**: PyInstaller standalone .exe for Windows
-* **StackTheDeck.spec**: PyInstaller setup file for Windows/Mac. Use with ```pyinstaller StackTheDeck.spec```
+* **so_setup.py** Setup file for Mac to compile the .so library with ```python so_setup.py build_ext --inplace```
 
 # Notes on package dependancies
 
