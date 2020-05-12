@@ -1495,7 +1495,8 @@ class Table():
             b2 = (sum(self.player_banks) +
                   sum(self.player_bets) - b1)
 
-            prob_fold = gamblers_ruin(max(ideal_bet, bet), pr, b1-bet, b2+bet)
+            prob_fold = gamblers_ruin(max(ideal_bet, bet, self.blinds),
+                                      pr, b1-bet, b2+bet)
             self.player_probs_fold[player_idx] = prob_fold
             prob_call = gamblers_ruin(current_bet, pr, b1, b2)
             self.player_probs_call[player_idx] = prob_call
@@ -1583,7 +1584,10 @@ class Table():
                   self.player_bets[player_idx])
             b2 = (sum(self.player_banks) + sum(self.player_bets) - b1)
             tol = self.player_tolerances[player_idx]
-            lower_bound = -log(pr)*b1/log(tol)-1
+            if pr == 0:
+                lower_bound = 0
+            else:
+                lower_bound = -log(pr)*b1/log(tol)-1
 
             if lower_bound < 1:
                 ideal_bet = 1
